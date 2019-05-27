@@ -1,0 +1,135 @@
+# Kodi Media Center language file
+# Addon Name: Sleep Timer
+# Addon id: service.sleeptimer
+# Addon Provider: enen92,Solo0815
+msgid ""
+msgstr ""
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: ru\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#settings labels
+
+msgctxt "#30000"
+msgid "Sleep Timer"
+msgstr "Таймер Сна"
+
+msgctxt "#30001"
+msgid "Cancel to continue playing"
+msgstr "Отменить отключение, чтобы продолжить просмотр"
+
+msgctxt "#30002"
+msgid "Service check time (minutes)"
+msgstr "Интервал проверки (в минутах)"
+
+msgctxt "#30003"
+msgid "Waiting time for the dialog (before stop) (seconds)"
+msgstr "Время показа диалога отмены (в секундах)"
+
+msgctxt "#30004"
+msgid "Slow mute audio before stop playing"
+msgstr "Плавное понижение громкости перед остановкой воспр."
+
+msgctxt "#30005"
+msgid "General"
+msgstr "Основные"
+
+msgctxt "#30006"
+msgid "Time between 1% volume change  (millisec)"
+msgstr "Таймаут изменения громк. на 1% (миллисек.)"
+
+msgctxt "#30007"
+msgid "Next check time if dialog is cancelled (minutes)"
+msgstr "Повторить попытку после отмены, через (минут)"
+
+msgctxt "#30008"
+msgid "Enable Screensaver after stopping"
+msgstr "Включить скринсервер после остановки"
+
+msgctxt "#30009"
+msgid "Audio/Video Supervision settings"
+msgstr "Музыка/Видео"
+
+msgctxt "#30010"
+msgid "Enable Video Supervision"
+msgstr "Включить при просмотре Видео"
+
+msgctxt "#30011"
+msgid "Enable Audio Supervision"
+msgstr "Включить при прослушивании Музыки"
+
+msgctxt "#30012"
+msgid "Maximum Playing time (minutes) before asking to stop"
+msgstr "Максимальное время воспроизведения (в минутах) до запроса на остановку"
+
+msgctxt "#30013"
+msgid "Video Playbacktime"
+msgstr "Время до отключения Видео (в минутах)"
+
+msgctxt "#30014"
+msgid "Audio Playbacktime"
+msgstr "Время до отключения Музыка (в минутах)"
+
+msgctxt "#30015"
+msgid "Debug"
+msgstr "Отладка"
+
+msgctxt "#30016"
+msgid "Debug mode"
+msgstr "Режим отладки"
+
+msgctxt "#30017"
+msgid "'Enable' debugging sets:"
+msgstr "Включенные настройки при отладке:"
+
+msgctxt "#30018"
+msgid "Audio and Video-Check enabled"
+msgstr "Музыка и Видео - «Проверка включена»"
+
+msgctxt "#30019"
+msgid "Service check time (minutes): '1'"
+msgstr "Интервал проверки: «1 минута»"
+
+msgctxt "#30020"
+msgid "Waiting time for the dialog (before stop) (seconds): '30'"
+msgstr "Время показа диалога до остановки: «30 секунд»"
+
+msgctxt "#30021"
+msgid "It doesn't matter, what you set in the other Tabs!"
+msgstr "Неважно, что вы установили в других вкладках!"
+
+msgctxt "#30022"
+msgid "Execute custom cmd after playback stop"
+msgstr "Выполнить команду CMD после остановки воспроизведения"
+
+msgctxt "#30023"
+msgid "Custom CMD"
+msgstr "Произвольная команда CMD"
+
+msgctxt "#30024"
+msgid "Supervision Mode"
+msgstr "Задать промежуток времени"
+
+msgctxt "#30025"
+msgid "Hour start (eg. 23:00)"
+msgstr "Время начала наблюдения (eg. 23:00)"
+
+msgctxt "#30026"
+msgid "Hour supervision end (eg. 03:20)"
+msgstr "Время конца наблюдения (eg. 03:20)"
+
+msgctxt "#30027"
+msgid "Always"
+msgstr "Круглосуточно"
+
+msgctxt "#30028"
+msgid "Specific Time"
+msgstr "Задать время"
+
+msgctxt "#30029"
+msgid "Supervision Mode"
+msgstr "Выполнять только в заданном промежутке суток"

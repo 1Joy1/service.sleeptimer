@@ -26,285 +26,315 @@ import xbmcvfs
 import json
 import os
 
-msgdialogprogress = xbmcgui.DialogProgress()
 
-addon_id = 'service.sleeptimer'
-selfAddon = xbmcaddon.Addon(addon_id)
-datapath = xbmc.translatePath(selfAddon.getAddonInfo('profile')).decode('utf-8')
-addonfolder = xbmc.translatePath(selfAddon.getAddonInfo('path')).decode('utf-8')
-debug=selfAddon.getSetting('debug_mode')
+__addonid__ = 'service.sleeptimer'
+__addon__ = xbmcaddon.Addon( __addonid__ )
+__version__ = __addon__.getAddonInfo( 'version' )
 
-__version__ = selfAddon.getAddonInfo('version')
-check_time = selfAddon.getSetting('check_time')
-check_time_next = int(selfAddon.getSetting('check_time_next'))
-time_to_wait = int(selfAddon.getSetting('waiting_time_dialog'))
-audiochange = selfAddon.getSetting('audio_change')
-audiochangerate = int(selfAddon.getSetting('audio_change_rate'))
-global audio_enable
-audio_enable = str(selfAddon.getSetting('audio_enable'))
-video_enable = str(selfAddon.getSetting('video_enable'))
-max_time_audio = int(selfAddon.getSetting('max_time_audio'))
-max_time_video = int(selfAddon.getSetting('max_time_video'))
-enable_screensaver = selfAddon.getSetting('enable_screensaver')
-custom_cmd = selfAddon.getSetting('custom_cmd')
-cmd = selfAddon.getSetting('cmd')
+
+
 
 # Functions:
-def translate(text):
-    return selfAddon.getLocalizedString(text).encode('utf-8')
 
 def _log( message ):
-    print addon_id + ": " + str(message)
+    xbmc.log( "[" + __addonid__ + "] : " + message, level=xbmc.LOGNOTICE )
 
-# print the actual playing file in DEBUG-mode
-def print_act_playing_file():
-    if debug == 'true':
-        actPlayingFile = xbmc.Player().getPlayingFile()
-        _log ( "DEBUG: File: " + str(actPlayingFile) )
+def translate(text):
+    return __addon__.getLocalizedString(text).encode('utf-8')
 
-# wait for abort - xbmc.sleep or time.sleep doesn't work
-# and prevents Kodi from exiting
-def do_next_check( iTimeToWait ):
-    if debug == 'true':
-        _log ( "DEBUG: next check in " + str(iTimeToWait) + " min" )
-    if xbmc.Monitor().waitForAbort(int(iTimeToWait)*60):
-        exit()
-
-def get_kodi_time():
-    am_pm = xbmc.getInfoLabel('System.Time(xx)').lower()
-    system_time = xbmc.getInfoLabel('System.Time(hh:mm)')
-    hour = system_time.split(':')[0]
-    minute = system_time.split(':')[1]
-    if am_pm == 'pm':
-        hour = int(hour) + 12
-    time_string = str(hour) + str(minute)
-    return int(time_string)
-
-def should_i_supervise(kodi_time,supervise_start_time,supervise_end_time):
-    if selfAddon.getSetting('supervision_mode') == '0' or debug == 'true':
+def str_to_bool( string ):
+    if string.lower() == "true" or string == "1":
         return True
+    elif string.lower() == "false" or string == "0":
+        return False
     else:
-        if supervise_start_time == 0 and supervise_end_time == 0:
-            return True
-        elif kodi_time > supervise_start_time:
-            if supervise_end_time > supervise_start_time:
-                if kodi_time < supervise_end_time:
-                    return True
-                else:
-                    return False
-            else:
-                supervise_end_time += 2400
-                if kodi_time < supervise_end_time:
-                    return True
-                else:
-                    return False
+        raise ValueError("The argument must be a string, value must be one of: «true», «false», «1», «0»")
+
+
+
+
+class ServiceMonitor(xbmc.Monitor):
+    def __init__( self, *args, **kwargs ):
+        xbmc.Monitor.__init__(self)
+        self.action = kwargs['action']
+
+    def onSettingsChanged( self ):
+        self.action()
+
+
+
+
+
+class Service:
+    def __init__( self ):
+        _log( "Service initialized ... (" + str(__version__) + ")" )
+        # addon settings change
+        self.monitor = ServiceMonitor(action = self.initSettings)
+        self.initSettings()
+        self.startService()
+
+
+    def startService( self ):
+        _log ( " ... started ... " )
+        canceled_by_user = False
+        check_time = 0.25
+
+        while not self.monitor.abortRequested():
+
+            self.debugging( "Do next check after " + ((str(int(check_time*60)) + " sec") if check_time < 1 else (str(check_time) + " min")) )
+
+            self.monitor.waitForAbort(int(check_time * 60))
+            check_time = self.check_time
+
+            if not xbmc.Player().isPlaying() or not self.superviseTime():
+                self.debugging( "Player not playing or not supervise time." )
+                canceled_by_user = False
+                continue
+
+            max_time_in_minutes = self.getMaxTimeInMinutes( canceled_by_user )
+
+            if max_time_in_minutes is None:
+                self.debugging( "Value max_time_in_minutes is " + str(max_time_in_minutes) )
+                canceled_by_user = False
+                continue
+
+            idle_time = xbmc.getGlobalIdleTime()
+            idle_time_in_minutes = int(idle_time) / 60
+            self.debugging( "Value max_time_in_minutes = " + str(max_time_in_minutes) )
+            self.debugging( "idle_time: '" + str(idle_time) + " sec'; idle_time_in_minutes: '" + str(idle_time_in_minutes) + " min'" )
+
+            if idle_time_in_minutes < max_time_in_minutes:
+                self.debugging( "Time does not exceed max limit.")
+                continue
+
+            if not self.tryStopPlaying():
+                self.debugging( "The user canceled the sleep process, next sleep process after " + str(self.max_min_after_canceled) + " min" )
+                canceled_by_user = True
+
+        self.stopService()
+
+
+
+    def stopService( self ):
+        _log( "Service terminated" )
+
+
+
+    def getMaxTimeInMinutes( self, canceled_by_user ):
+        max_time_in_minutes = None
+
+        if xbmc.Player().isPlayingAudio() and self.enable_audio:
+            if self.debug_mode:
+                self.debugging( "Detect playing audio and monitoring audio enabled" )
+                self.debugging( "File: " + str(xbmc.Player().getPlayingFile()) )
+                self.debugging( "Max audio time = " + str(self.maxaudio_time_in_minutes) + "min" )
+            max_time_in_minutes = self.maxaudio_time_in_minutes if not canceled_by_user else self.max_min_after_canceled
+        elif xbmc.Player().isPlayingVideo() and self.enable_video:
+            if self.debug_mode:
+                self.debugging( "Detect playing video and monitoring video enabled" )
+                self.debugging( "File: " + str(xbmc.Player().getPlayingFile()) )
+                self.debugging( "Max video time = " + str(self.maxvideo_time_in_minutes) + "min" )
+            max_time_in_minutes = self.maxvideo_time_in_minutes if not canceled_by_user else self.max_min_after_canceled
         else:
-            if kodi_time < supervise_end_time:
-                return True
-            else:
+            if self.debug_mode:
+                self.debugging( "Playing is not Audio or Video, or not monitoring enabled" )
+
+        return max_time_in_minutes
+
+
+
+    def tryStopPlaying( self ):
+        if self.msgDialogIsCanceled():
+            return False
+
+        if self.audio_change:
+            current_volume = self.getCurrentVolume()
+            if not self.softVolumeDown(current_volume):
                 return False
 
-class service:
-    def __init__(self):
-        FirstCycle = True
-        next_check = False
+        self.playerStop()
 
-        while True:
-            kodi_time = get_kodi_time()
-            try:
-                supervise_start_time = int(selfAddon.getSetting('hour_start_sup').split(':')[0]+selfAddon.getSetting('hour_start_sup').split(':')[1])
-            except: supervise_start_time = 0
-            try:
-                supervise_end_time = int(selfAddon.getSetting('hour_end_sup').split(':')[0]+selfAddon.getSetting('hour_end_sup').split(':')[1])
-            except: supervise_end_time = 0
-            proceed = should_i_supervise(kodi_time,supervise_start_time,supervise_end_time)
-            if proceed:
-                if FirstCycle:
-                    # Variables:
-                    enable_audio = audio_enable
-                    enable_video = video_enable
-                    maxaudio_time_in_minutes = max_time_audio
-                    maxvideo_time_in_minutes = max_time_video
-                    iCheckTime = check_time
+        if self.audio_change:
+            self.restoreVolume(current_volume)
 
-                    _log ( "started ... (" + str(__version__) + ")" )
-                    if debug == 'true':
-                        _log ( "DEBUG: ################################################################" )
-                        _log ( "DEBUG: Settings in Kodi:" )
-                        _log ( 'DEBUG: enable_audio: ' + enable_audio )
-                        _log ( "DEBUG: maxaudio_time_in_minutes: " + str(maxaudio_time_in_minutes) )
-                        _log ( "DEBUG: enable_video: " + str(enable_video) )
-                        _log ( "DEBUG: maxvideo_time_in_minutes: " + str(maxvideo_time_in_minutes) )
-                        _log ( "DEBUG: check_time: " + str(iCheckTime) )
-                        _log ( "DEBUG: Supervision mode: Always")
-                        _log ( "DEBUG: ################################################################" )
-                        # Set this low values for easier debugging!
-                        _log ( "DEBUG: debug is enabled! Override Settings:" )
-                        enable_audio = 'true'
-                        _log ( "DEBUG: -> enable_audio: " + str(enable_audio) )
-                        maxaudio_time_in_minutes = 1
-                        _log ( "DEBUG: -> maxaudio_time_in_minutes: " + str(maxaudio_time_in_minutes) )
-                        enable_video = 'true'
-                        _log ( "DEBUG: -> enable_video: " + str(enable_audio) )
-                        maxvideo_time_in_minutes = 1
-                        _log ( "DEBUG: -> maxvideo_time_in_minutes: " + str(maxvideo_time_in_minutes) )
-                        iCheckTime = 1
-                        _log ( "DEBUG: -> check_time: " + str(iCheckTime) )
-                        _log ( "DEBUG: ----------------------------------------------------------------" )
+        if self.enable_screensaver:
+            self.activateScreensaver()
 
-                    # wait 15s before start to let Kodi finish the intro-movie
-                    if xbmc.Monitor().waitForAbort(15):
-                        break
+        if self.custom_cmd:
+            self.runCustomCMD()
 
-                    max_time_in_minutes = -1
-                    FirstCycle = False
+        return True
 
-                idle_time = xbmc.getGlobalIdleTime()
-                idle_time_in_minutes = int(idle_time)/60
 
-                if xbmc.Player().isPlaying():
 
-                    if debug == 'true' and max_time_in_minutes == -1:
-                        _log ( "DEBUG: max_time_in_minutes before calculation: " + str(max_time_in_minutes) )
+    def initSettings( self ):
+        _log ( "Load Settings ..." )
 
-                    if next_check == 'true':
-                        # add "diff_between_idle_and_check_time" to "idle_time_in_minutes"
-                        idle_time_in_minutes += int(diff_between_idle_and_check_time)
+        self.debug_mode = str_to_bool( __addon__.getSetting('debug_mode') )
+        self.enable_audio = str_to_bool( __addon__.getSetting('audio_enable') )
+        self.enable_video = str_to_bool( __addon__.getSetting('video_enable') )
+        self.enable_screensaver = str_to_bool( __addon__.getSetting('enable_screensaver') )
+        self.custom_cmd = str_to_bool( __addon__.getSetting('custom_cmd') )
+        self.audio_change = str_to_bool( __addon__.getSetting('audio_change') )
+        self.supervision_mode = str_to_bool( __addon__.getSetting('supervision_mode') )
+        self.maxaudio_time_in_minutes = int( __addon__.getSetting('max_time_audio') )
+        self.maxvideo_time_in_minutes = int( __addon__.getSetting('max_time_video') )
+        self.check_time = int( __addon__.getSetting('check_time') )
+        self.max_min_after_canceled = int( __addon__.getSetting('check_time_next') )
+        self.waiting_time_dialog = int( __addon__.getSetting('waiting_time_dialog') )
+        self.audio_change_rate = int( __addon__.getSetting('audio_change_rate') )
+        self.supervise_start_time = int( __addon__.getSetting('hour_start_sup').replace(":", "") )
+        self.supervise_end_time = int( __addon__.getSetting('hour_end_sup').replace(":", "") )
+        self.cmd = __addon__.getSetting('cmd')
 
-                    if debug == 'true' and max_time_in_minutes == -1:
-                        _log ( "DEBUG: max_time_in_minutes after calculation: " + str(max_time_in_minutes) )
+        # If debugging mode, set low values for easier!
+        if self.debug_mode:
+            self.debugging( "#######################Settings in Kodi##########################" )
+            self.debugging( "debug_mode: " + str(self.debug_mode) )
+            self.debugging( "enable_audio: " + str(self.enable_audio) )
+            self.debugging( "enable_video: " + str(self.enable_video) )
+            self.debugging( "enable_screensaver: " + str(self.enable_screensaver) )
+            self.debugging( "custom_cmd: " + str(self.custom_cmd) )
+            self.debugging( "audio_change: " + str(self.audio_change) )
+            self.debugging( "maxaudio_time_in_minutes: " + str(self.maxaudio_time_in_minutes) )
+            self.debugging( "maxvideo_time_in_minutes: " + str(self.maxvideo_time_in_minutes) )
+            self.debugging( "max_min_after_canceled: " + str(self.max_min_after_canceled) )
+            self.debugging( "check_time: " + str(self.check_time) )
+            self.debugging( "waiting_time_dialog: " + str(self.waiting_time_dialog) )
+            self.debugging( "audio_change_rate: " + str(self.audio_change_rate) )
+            self.debugging( "Supervision mode: " + str(self.supervision_mode) )
+            self.debugging( "supervise_start_time: " + str(self.supervise_start_time) )
+            self.debugging( "supervise_end_time: " + str(self.supervise_end_time) )
+            self.debugging( "################################################################" )
 
-                    if xbmc.Player().isPlayingAudio():
-                        if enable_audio == 'true':
-                            if debug == 'true':
-                                _log ( "DEBUG: enable_audio is true" )
-                                print_act_playing_file()
-                            what_is_playing = "audio"
-                            max_time_in_minutes = maxaudio_time_in_minutes
-                        else:
-                            if debug == 'true':
-                                _log ( "DEBUG: Player is playing Audio, but check is disabled" )
-                            do_next_check(iCheckTime)
-                            continue
+            self.enable_audio = True
+            self.enable_video = True
+            self.maxaudio_time_in_minutes = 3
+            self.maxvideo_time_in_minutes = 3
+            self.check_time = 1
+            self.max_min_after_canceled = 5
+            self.waiting_time_dialog = 30
+            self.supervision_mode = False
 
-                    elif xbmc.Player().isPlayingVideo():
-                        if enable_video == 'true':
-                            if debug == 'true':
-                                _log ( "DEBUG: enable_video is true" )
-                                print_act_playing_file()
-                            what_is_playing = "video"
-                            max_time_in_minutes = maxvideo_time_in_minutes
-                        else:
-                            if debug == 'true':
-                                _log ( "DEBUG: Player is playing Video, but check is disabled" )
-                            do_next_check(iCheckTime)
-                            continue
+            self.debugging( "--------------Debug is enabled! Override Settings:--------------" )
+            self.debugging( "-> enable_audio: " + str(self.enable_audio) )
+            self.debugging( "-> maxaudio_time_in_minutes: " + str(self.maxaudio_time_in_minutes) )
+            self.debugging( "-> enable_video: " + str(self.enable_audio) )
+            self.debugging( "-> maxvideo_time_in_minutes: " + str(self.maxvideo_time_in_minutes) )
+            self.debugging( "-> check_time: " + str(self.check_time) )
+            self.debugging( "-> max_min_after_canceled: " + str(self.max_min_after_canceled) )
+            self.debugging( "-> waiting_time_dialog: " + str(self.waiting_time_dialog) )
+            self.debugging( "Supervision mode: " + str(self.supervision_mode) )
+            self.debugging( "----------------------------------------------------------------" )
 
-                    ### ToDo:
-                    # expand it with RetroPlayer for playing Games!!!
 
-                    else:
-                        if debug == 'true':
-                            _log ( "DEBUG: Player is playing, but no Audio or Video" )
-                            print_act_playing_file()
-                        what_is_playing = "other"
-                        do_next_check(iCheckTime)
-                        continue
+    def superviseTime( self ):
+        if self.supervision_mode:
 
-                    if debug == 'true':
-                        _log ( "DEBUG: what_is_playing: " + str(what_is_playing) )
+            kodi_time = int(time.strftime("%H%M"))
 
-                    if debug == 'true':
-                        _log ( "DEBUG: idle_time: '" + str(idle_time) + "s'; idle_time_in_minutes: '" + str(idle_time_in_minutes) + "'" )
-                        _log ( "DEBUG: max_time_in_minutes: " + str(max_time_in_minutes) )
+            if self.supervise_start_time > self.supervise_end_time:
+                if kodi_time < self.supervise_start_time and kodi_time > self.supervise_end_time:
+                    return False
 
-                    # only display the Progressdialog, if audio or video is enabled AND idle limit is reached
+            if self.supervise_start_time < self.supervise_end_time:
+                if kodi_time < self.supervise_start_time or kodi_time > self.supervise_end_time:
+                    return False
 
-                    # Check if what_is_playing is not "other" and idle time exceeds limit
-                    if ( what_is_playing != "other" and idle_time_in_minutes >= max_time_in_minutes ):
+        return True
 
-                        if debug == 'true':
-                            _log ( "DEBUG: idle_time exceeds max allowed. Display Progressdialog" )
 
-                        ret = msgdialogprogress.create(translate(30000),translate(30001))
-                        secs=0
-                        percent=0
-                        # use the multiplier 100 to get better %/calculation
-                        increment = 100*100 / time_to_wait
-                        cancelled = False
-                        while secs < time_to_wait:
-                            secs = secs + 1
-                            # divide with 100, to get the right value
-                            percent = increment*secs/100
-                            secs_left = str((time_to_wait - secs))
-                            remaining_display = str(secs_left) + " seconds left."
-                            msgdialogprogress.update(percent,translate(30001),remaining_display)
-                            xbmc.sleep(1000)
-                            if (msgdialogprogress.iscanceled()):
-                                cancelled = True
-                                if debug == 'true':
-                                    _log ( "DEBUG: Progressdialog cancelled" )
-                                break
-                        if cancelled == True:
-                            iCheckTime = check_time_next
-                            _log ( "Progressdialog cancelled, next check in " + str(iCheckTime) + " min" )
-                            # set next_check, so that it opens the dialog after "iCheckTime"
-                            next_check = True
-                            msgdialogprogress.close()
-                        else:
-                            _log ( "Progressdialog not cancelled: stopping Player" )
-                            msgdialogprogress.close()
+    def msgDialogIsCanceled( self ):
+        self.debugging( "Display Progress dialog" )
 
-                            # softmute audio before stop playing
-                            # get actual volume
-                            if audiochange == 'true':
-                                resp = xbmc.executeJSONRPC('{"jsonrpc": "2.0", "method": "Application.GetProperties", "params": { "properties": [ "volume"] }, "id": 1}')
-                                dct = json.loads(resp)
-                                muteVol = 10
+        dialog_progress = xbmcgui.DialogProgress()
+        dialog_progress.create(translate(30000), translate(30001))
+        secs=0
 
-                                if (dct.has_key("result")) and (dct["result"].has_key("volume")):
-                                    curVol = dct["result"]["volume"]
+        # use the multiplier 100 to get better %/calculation
+        increment = 100*100 / self.waiting_time_dialog
 
-                                    for i in range(curVol - 1, muteVol - 1, -1):
-                                        xbmc.executebuiltin('SetVolume(%d,showVolumeBar)' % (i))
-                                        # move down slowly
-                                        xbmc.sleep(audiochangerate)
+        while secs < self.waiting_time_dialog:
+            secs = secs + 1
+            # divide with 100, to get the right value
+            percent = increment * secs / 100
+            secs_left = str((self.waiting_time_dialog - secs))
+            dialog_progress.update(percent, translate(30001), secs_left + " seconds left.")
+            xbmc.sleep(1000)
 
-                            # stop player anyway
-                            xbmc.sleep(5000) # wait 5s before stopping
-                            xbmc.executebuiltin('PlayerControl(Stop)')
+            if (dialog_progress.iscanceled()):
+                self.debugging( "Progress dialog is cancelled. Not stopping Player" )
+                dialog_progress.close()
+                return True
 
-                            if audiochange == 'true':
-                                xbmc.sleep(2000) # wait 2s before changing the volume back
-                                if (dct.has_key("result")) and (dct["result"].has_key("volume")):
-                                    curVol = dct["result"]["volume"]
-                                    # we can move upwards fast, because there is nothing playing
-                                    xbmc.executebuiltin('SetVolume(%d,showVolumeBar)' % (curVol))
+        self.debugging( "Progressdialog not cancelled. Stopping Player" )
+        dialog_progress.close()
+        return False
 
-                            if enable_screensaver == 'true':
-                                if debug == 'true':
-                                    _log ( "DEBUG: Activating screensaver" )
-                                xbmc.executebuiltin('ActivateScreensaver')   
-                            
-                            #Run a custom cmd after playback is stopped
-                            if custom_cmd == 'true':
-                                if debug == 'true':
-                                    _log ( "DEBUG: Running custom script" )
-                                os.system(cmd)
-                    else:
-                        if debug == 'true':
-                            _log ( "DEBUG: Playing the stream, time does not exceed max limit" )
-                else:
-                    if debug == 'true':
-                        _log ( "DEBUG: Not playing any media file" )
-                    # reset max_time_in_minutes
-                    max_time_in_minutes = -1
 
-                diff_between_idle_and_check_time = idle_time_in_minutes - int(iCheckTime)
 
-                if debug == 'true' and next_check == 'true':
-                    _log ( "DEBUG: diff_between_idle_and_check_time: " + str(diff_between_idle_and_check_time) )
+    def getCurrentVolume( self ):
+        resp = xbmc.executeJSONRPC('{"jsonrpc": "2.0", "method": "Application.GetProperties", "params": { "properties": [ "volume"] }, "id": 1}')
+        dct = json.loads(resp)
+        if (dct.has_key("result")) and (dct["result"].has_key("volume")):
+            return dct["result"]["volume"]
+        else:
+            return 50
 
-                do_next_check(iCheckTime)
 
-service()
+
+    def softVolumeDown( self, current_volume ):
+        self.debugging( "Wait 2s before changing volume down" )
+        xbmc.sleep(2000) # wait 2s before changing the volume back
+        mute_volume = 10
+        for i in range(current_volume - 1, mute_volume - 1, -1):
+            xbmc.executebuiltin('SetVolume(%d,showVolumeBar)' % (i))
+            # move down slowly
+            xbmc.sleep(self.audio_change_rate)
+            # Canceled if any key down
+            if self.checkPressAnyKey():
+                return False
+        return True
+
+
+
+    def playerStop( self ):
+        self.debugging( "Wait 5s before stopping" )
+        xbmc.sleep(5000) # wait 5s before stopping
+        self.debugging( "Stop player" )
+        xbmc.executebuiltin('PlayerControl(Stop)')
+
+
+
+    def activateScreensaver( self ):
+        self.debugging( "Activating screensaver" )
+        xbmc.executebuiltin('ActivateScreensaver')
+
+
+
+    def runCustomCMD( self ):
+        self.debugging( "Running custom script" )
+        os.system(self.cmd)
+
+
+
+    def restoreVolume( self, volume ):
+        xbmc.sleep(2000) # wait 2s before changing the volume back
+        # we can move upwards fast, because there is nothing playing
+        xbmc.executebuiltin('SetVolume(%d,showVolumeBar)' % (volume))
+
+
+
+    def checkPressAnyKey( self ):
+        if xbmc.getGlobalIdleTime() < 1:
+            return True
+        return False
+
+
+
+    def debugging( self, message ):
+        if self.debug_mode:
+            _log ( "DEBUG: " + message )
+
+
+Service()
